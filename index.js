@@ -1,8 +1,45 @@
+// นำเข้า packages ที่จำเป็น
 const express = require("express");
 const { WebhookClient } = require("dialogflow-fulfillment");
 const admin = require("firebase-admin");
 
-// ตรวจสอบ environment variables ที่จำเป็น
+// ===================== ส่วนตั้งค่าการทำงานพื้นฐาน (Basic Configuration) =====================
+
+// ฟังก์ชันสำหรับแปลงเวลาเป็นเวลาประเทศไทย
+function getThaiTime() {
+  const now = new Date();
+  return new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+}
+
+// ฟังก์ชันตรวจสอบเวลาทำการ (9:00-18:00 น.)
+function isWithinBusinessHours() {
+  const thaiTime = getThaiTime();
+  const day = thaiTime.getDay(); // 0 = อาทิตย์, 1-6 = จันทร์-เสาร์
+  const hour = thaiTime.getHours();
+  const minutes = thaiTime.getMinutes();
+  const currentTime = hour + minutes / 60;
+
+  console.log(
+    `🕒 Current Thai time: ${thaiTime.toLocaleString("th-TH", {
+      timeZone: "Asia/Bangkok",
+    })}`
+  );
+  console.log(`📅 Day: ${day}, Hour: ${hour}, Minutes: ${minutes}`);
+
+  // วันอาทิตย์ (9:00-18:00)
+  if (day === 0) {
+    return currentTime >= 9 && currentTime < 18;
+  }
+  // วันจันทร์-เสาร์ (9:00-24:00)
+  else if (day >= 1 && day <= 6) {
+    return currentTime >= 9 && currentTime < 24;
+  }
+  return false;
+}
+
+// ===================== ส่วนตรวจสอบและตั้งค่า Environment Variables =====================
+
+// ตรวจสอบ environment variables ที่จำเป็นต้องมี
 const requiredEnvVars = [
   "FIREBASE_TYPE",
   "FIREBASE_PROJECT_ID",
@@ -18,6 +55,8 @@ requiredEnvVars.forEach((varName) => {
   }
 });
 
+// ===================== ส่วนตั้งค่าและเชื่อมต่อ Firebase =====================
+
 // กำหนดค่า Firebase Service Account
 const serviceAccount = {
   type: process.env.FIREBASE_TYPE,
@@ -32,7 +71,7 @@ const serviceAccount = {
   client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
 };
 
-// เริ่มการเชื่อมต่อ Firebase
+// เริ่มการเชื่อมต่อและทดสอบ Firebase
 console.log("🔄 Attempting to connect to Firebase...");
 console.log("📝 Firebase config:", {
   projectId: serviceAccount.project_id,
@@ -54,9 +93,7 @@ try {
   db.ref(".info/connected").on("value", async (snapshot) => {
     if (snapshot.val() === true) {
       console.log("✅ Connected to Firebase Realtime Database");
-
       try {
-        // ทดสอบเขียนข้อมูล
         await db.ref("system_status").set({
           last_connection: new Date().toISOString(),
           status: "online",
@@ -80,42 +117,14 @@ try {
   process.exit(1);
 }
 
-// ฟังก์ชันสำหรับแปลงเวลาเป็นเวลาประเทศไทย
-function getThaiTime() {
-  const now = new Date();
-  return new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
-}
+// ===================== ส่วนตั้งค่า Express Server =====================
 
-// เพิ่มฟังก์ชันตรวจสอบเวลาทำการ (เวลาไทย)
-function isWithinBusinessHours() {
-  const thaiTime = getThaiTime();
-  const day = thaiTime.getDay(); // 0 = อาทิตย์, 1-6 = จันทร์-เสาร์
-  const hour = thaiTime.getHours();
-  const minutes = thaiTime.getMinutes();
-  const currentTime = hour + minutes / 60;
-
-  console.log(
-    `🕒 Current Thai time: ${thaiTime.toLocaleString("th-TH", {
-      timeZone: "Asia/Bangkok",
-    })}`
-  );
-  console.log(`📅 Day: ${day}, Hour: ${hour}, Minutes: ${minutes}`);
-
-  // วันอาทิตย์ (9:00-18:00)
-  if (day === 0) {
-    return currentTime >= 9 && currentTime < 18;
-  }
-  // วันจันทร์-เสาร์ (9:00-24:00)
-  else if (day >= 1 && day <= 6) {
-    return currentTime >= 9 && currentTime < 18;
-  }
-  return false;
-}
-
-// ตั้งค่า Express
+// ตั้งค่า Express และ Middleware
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ===================== ส่วน Route Handlers =====================
 
 // Route สำหรับตรวจสอบสถานะเซิร์ฟเวอร์
 app.get("/", (req, res) => {
@@ -129,6 +138,52 @@ app.get("/", (req, res) => {
   });
 });
 
+// ===================== ส่วนจัดการ Dialogflow Webhook =====================
+
+// ฟังก์ชันจัดการ Fallback Intent
+async function handleFallback(agent) {
+  try {
+    // ดึง userId จาก LINE
+    const userId =
+      agent.originalRequest?.payload?.data?.source?.userId || "unknown";
+    console.log(`👤 Processing fallback for user: ${userId}`);
+
+    // ตรวจสอบและอัพเดทข้อมูลผู้ใช้ใน Firebase
+    const userRef = db.ref(`users/${userId}`);
+    const snapshot = await userRef.once("value");
+    const userData = snapshot.val() || {};
+    const lastFallbackTime = userData.lastFallbackTime || 0;
+    const currentTime = Date.now();
+    const COOLDOWN_PERIOD = 1800000; // 30 นาที
+
+    // ตรวจสอบช่วงเวลา cooldown
+    if (currentTime - lastFallbackTime >= COOLDOWN_PERIOD) {
+      // อัพเดทเวลาล่าสุดที่ผู้ใช้ได้รับข้อความ fallback
+      await userRef.update({
+        lastFallbackTime: currentTime,
+        lastUpdated: getThaiTime().toISOString(),
+        userId: userId,
+      });
+
+      // ส่งข้อความตามเวลาทำการ
+      if (isWithinBusinessHours()) {
+        agent.add("รบกวนคุณลูกค้ารอเจ้าหน้าที่ฝ่ายบริการตอบกลับอีกครั้งนะคะ");
+      } else {
+        agent.add(
+          "รบกวนคุณลูกค้ารอเจ้าหน้าที่ฝ่ายบริการตอบกลับอีกครั้งนะคะ ทั้งนี้เจ้าหน้าที่ฝ่ายบริการทำการจันทร์-เสาร์ เวลา 09.00-00.00 น. และวันอาทิตย์ทำการเวลา 09.00-18.00 น. ค่ะ"
+        );
+      }
+      console.log(`✅ Updated fallback time for user: ${userId}`);
+    } else {
+      agent.add(""); // ไม่ส่งข้อความถ้าอยู่ในช่วง cooldown
+      console.log(`ℹ️ User ${userId} is in cooldown period`);
+    }
+  } catch (error) {
+    console.error("❌ Error in handleFallback:", error);
+    agent.add("ขออภัย เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
+  }
+}
+
 // Webhook endpoint สำหรับ Dialogflow
 app.post("/webhook", async (req, res) => {
   const thaiTime = getThaiTime();
@@ -139,47 +194,6 @@ app.post("/webhook", async (req, res) => {
   });
 
   const agent = new WebhookClient({ request: req, response: res });
-
-  // ฟังก์ชันจัดการ Fallback Intent
-  async function handleFallback(agent) {
-    try {
-      const userId =
-        agent.originalRequest?.payload?.data?.source?.userId || "unknown";
-      console.log(`👤 Processing fallback for user: ${userId}`);
-
-      const userRef = db.ref(`users/${userId}`);
-      const snapshot = await userRef.once("value");
-      const userData = snapshot.val() || {};
-      const lastFallbackTime = userData.lastFallbackTime || 0;
-      const currentTime = Date.now();
-      const COOLDOWN_PERIOD = 300000;
-
-      if (currentTime - lastFallbackTime >= COOLDOWN_PERIOD) {
-        await userRef.update({
-          lastFallbackTime: currentTime,
-          lastUpdated: getThaiTime().toISOString(),
-          userId: userId,
-        });
-
-        // ตรวจสอบเวลาทำการและส่งข้อความตามเงื่อนไข
-        if (isWithinBusinessHours()) {
-          agent.add("รบกวนคุณลูกค้ารอเจ้าหน้าที่ฝ่ายบริการตอบกลับอีกครั้งนะคะ");
-        } else {
-          agent.add(
-            "รบกวนคุณลูกค้ารอเจ้าหน้าที่ฝ่ายบริการตอบกลับอีกครั้งนะคะ ทั้งนี้เจ้าหน้าที่ฝ่ายบริการทำการจันทร์-เสาร์ เวลา 09.00-00.00 น. และวันอาทิตย์ทำการเวลา 09.00-18.00 น. ค่ะ"
-          );
-        }
-        console.log(`✅ Updated fallback time for user: ${userId}`);
-      } else {
-        agent.add("");
-        console.log(`ℹ️ User ${userId} is in cooldown period`);
-      }
-    } catch (error) {
-      console.error("❌ Error in handleFallback:", error);
-      agent.add("ขออภัย เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
-    }
-  }
-
   const intentMap = new Map();
   intentMap.set("Default Fallback Intent", handleFallback);
 
@@ -190,6 +204,8 @@ app.post("/webhook", async (req, res) => {
     res.status(500).send({ error: "Internal server error" });
   }
 });
+
+// ===================== ส่วนเริ่มต้น Server และจัดการข้อผิดพลาด =====================
 
 // เริ่มต้น server
 const port = process.env.PORT || 3000;
@@ -207,7 +223,7 @@ app.listen(port, () => {
   `);
 });
 
-// จัดการ uncaught exceptions
+// จัดการ uncaught exceptions และ unhandled rejections
 process.on("uncaughtException", (error) => {
   console.error("💥 Uncaught Exception:", error);
   process.exit(1);
