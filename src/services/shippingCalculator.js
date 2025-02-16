@@ -1,244 +1,118 @@
+// src/services/shippingCalculator.js
 const { getThaiTime } = require("./timeService");
 
 /**
- * คำนวณปริมาตรเชิงการค้า (CBM)
- * @param {number} width - ความกว้าง (ซม.)
- * @param {number} length - ความยาว (ซม.)
- * @param {number} height - ความสูง (ซม.)
+ * แปลงข้อความเป็นพารามิเตอร์
+ * @param {string} input - ข้อความจากผู้ใช้
+ * @returns {Object} พารามิเตอร์ที่แยกแล้ว
+ */
+function parseInput(input) {
+  // กรณีข้อความแบบบรรทัดเดียว
+  if (input.includes(",")) {
+    const [rank, type, weight, dimensions, transport] = input
+      .split(",")
+      .map((s) => s.trim());
+    return { rank, type, weight, dimensions, transport };
+  }
+
+  // กรณีข้อความแบบหลายบรรทัด
+  const lines = input.split("\n");
+  const params = {};
+
+  lines.forEach((line) => {
+    const [key, value] = line.split(":").map((s) => s.trim());
+    switch (key.toLowerCase()) {
+      case "rank":
+        params.rank = value;
+        break;
+      case "ประเภท":
+        params.type = value;
+        break;
+      case "น้ำหนัก":
+        params.weight = value;
+        break;
+      case "ขนาด":
+        params.dimensions = value;
+        break;
+      case "ขนส่ง":
+        params.transport = value;
+        break;
+    }
+  });
+
+  return params;
+}
+
+/**
+ * คำนวณปริมาตร (CBM)
+ * @param {string} dimensions - ขนาดในรูปแบบ กxยxส
  * @returns {number} ปริมาตรเป็น CBM
  */
-function calculateCBM(width, length, height) {
+function calculateCBM(dimensions) {
+  const [width, length, height] = dimensions
+    .toLowerCase()
+    .replace("ซม.", "")
+    .split("x")
+    .map(Number);
   return (width * length * height) / 1000000;
 }
 
 /**
- * กำหนด Rank ตามยอดสะสม
- * @param {number} accumulatedAmount - ยอดสะสมการสั่งซื้อ (บาท)
- * @returns {string} Rank ของลูกค้า
+ * คำนวณค่าขนส่ง
+ * @param {string} rank - ระดับลูกค้า
+ * @param {string} type - ประเภทสินค้า
+ * @param {number} weight - น้ำหนักเป็น kg
+ * @param {number} cbm - ปริมาตรเป็น CBM
+ * @param {string} transport - วิธีขนส่ง
+ * @returns {number} ค่าขนส่ง
  */
-function determineRank(accumulatedAmount = 0) {
-  if (accumulatedAmount > 2000000) return "STAR";
-  if (accumulatedAmount > 500000) return "DIAMOND";
-  return "SILVER";
-}
-
-/**
- * ดึงอัตราค่าขนส่งตาม Rank และประเภทสินค้า
- * @param {string} rank - Rank ของลูกค้า
- * @param {string} productType - ประเภทสินค้า ('general', 'type1-2', 'special')
- * @param {string} shippingMethod - วิธีการขนส่ง ('land', 'sea')
- * @returns {Object} อัตราค่าขนส่งต่อ กก. และ CBM
- */
-function getShippingRate(
-  rank = "SILVER",
-  productType = "general",
-  shippingMethod = "land"
-) {
-  // Normalize inputs
-  rank = (rank || "SILVER").toUpperCase();
-  productType = (productType || "general").toLowerCase();
-  shippingMethod = (shippingMethod || "land").toLowerCase();
-
-  // Validate inputs
-  const validRanks = ["SILVER", "DIAMOND", "STAR"];
-  const validProductTypes = ["general", "type1-2", "special"];
-  const validShippingMethods = ["land", "sea"];
-
-  if (!validRanks.includes(rank)) rank = "SILVER";
-  if (!validProductTypes.includes(productType)) productType = "general";
-  if (!validShippingMethods.includes(shippingMethod)) shippingMethod = "land";
-
+function calculateShippingFee(rank, type, weight, cbm, transport) {
   const rates = {
-    SILVER: {
-      land: {
-        general: { perKg: 50, perCBM: 7500 },
-        "type1-2": { perKg: 60, perCBM: 8500 },
-        special: { perKg: 120, perCBM: 12000 },
+    car: {
+      "silver rabbit": {
+        ทั่วไป: { perKg: 50, perCBM: 7500 },
+        "ประเภท 1,2": { perKg: 60, perCBM: 8500 },
+        พิเศษ: { perKg: 120, perCBM: 12000 },
       },
-      sea: {
-        general: { perKg: 45, perCBM: 5400 },
-        "type1-2": { perKg: 50, perCBM: 6900 },
-        special: { perKg: 120, perCBM: 12000 },
+      "diamond rabbit": {
+        ทั่วไป: { perKg: 45, perCBM: 7300 },
+        "ประเภท 1,2": { perKg: 55, perCBM: 8300 },
+        พิเศษ: { perKg: 110, perCBM: 11000 },
       },
-    },
-    DIAMOND: {
-      land: {
-        general: { perKg: 45, perCBM: 7300 },
-        "type1-2": { perKg: 55, perCBM: 8300 },
-        special: { perKg: 110, perCBM: 11000 },
-      },
-      sea: {
-        general: { perKg: 40, perCBM: 4900 },
-        "type1-2": { perKg: 50, perCBM: 6500 },
-        special: { perKg: 110, perCBM: 11000 },
+      "star rabbit": {
+        ทั่วไป: { perKg: 40, perCBM: 6800 },
+        "ประเภท 1,2": { perKg: 50, perCBM: 7800 },
+        พิเศษ: { perKg: 100, perCBM: 10000 },
       },
     },
-    STAR: {
-      land: {
-        general: { perKg: 40, perCBM: 6800 },
-        "type1-2": { perKg: 50, perCBM: 7800 },
-        special: { perKg: 100, perCBM: 10000 },
+    ship: {
+      "silver rabbit": {
+        ทั่วไป: { perKg: 45, perCBM: 5400 },
+        "ประเภท 1,2": { perKg: 50, perCBM: 6900 },
+        พิเศษ: { perKg: 120, perCBM: 12000 },
       },
-      sea: {
-        general: { perKg: 35, perCBM: 4500 },
-        "type1-2": { perKg: 45, perCBM: 6300 },
-        special: { perKg: 100, perCBM: 10000 },
+      "diamond rabbit": {
+        ทั่วไป: { perKg: 40, perCBM: 4900 },
+        "ประเภท 1,2": { perKg: 50, perCBM: 6500 },
+        พิเศษ: { perKg: 110, perCBM: 11000 },
+      },
+      "star rabbit": {
+        ทั่วไป: { perKg: 35, perCBM: 4500 },
+        "ประเภท 1,2": { perKg: 45, perCBM: 6300 },
+        พิเศษ: { perKg: 100, perCBM: 10000 },
       },
     },
   };
 
-  return rates[rank][shippingMethod][productType];
-}
+  const transportType = transport === "รถ" ? "car" : "ship";
+  const rateTable = rates[transportType][rank.toLowerCase()][type];
 
-/**
- * คำนวณค่าขนส่งสุทธิ
- * @param {number} weight - น้ำหนักจริง (กก.)
- * @param {number} cbm - ปริมาตรเชิงการค้า (CBM)
- * @param {Object} rate - อัตราค่าขนส่ง
- * @returns {Object} ค่าขนส่งและวิธีการคำนวณที่ใช้
- */
-function calculateShippingFee(weight, cbm, rate) {
-  if (
-    !rate ||
-    typeof rate.perCBM !== "number" ||
-    typeof rate.perKg !== "number"
-  ) {
-    throw new Error("Invalid rate object provided");
-  }
+  // คำนวณค่าขนส่งทั้งแบบ kg และ CBM
+  const byWeight = weight * rateTable.perKg;
+  const byCBM = cbm * rateTable.perCBM;
 
-  const volumetricFee = cbm * rate.perCBM;
-  const weightFee = weight * rate.perKg;
-
-  return {
-    fee: Math.max(volumetricFee, weightFee),
-    method: volumetricFee > weightFee ? "CBM" : "WEIGHT",
-  };
-}
-
-/**
- * ตรวจสอบความถูกต้องของพารามิเตอร์
- * @param {Object} params - พารามิเตอร์ที่ต้องการตรวจสอบ
- * @returns {Object} ผลการตรวจสอบ { isValid, message }
- */
-function validateParameters(params) {
-  const { width, length, height, weight } = params;
-
-  // Check if all required parameters exist
-  if (!width || !length || !height || !weight) {
-    return {
-      isValid: false,
-      message:
-        "กรุณาระบุข้อมูลให้ครบถ้วน (กว้าง x ยาว x สูง และน้ำหนัก) เช่น:\n- กว้าง 50 ซม.\n- ยาว 60 ซม.\n- สูง 40 ซม.\n- น้ำหนัก 5 กก.",
-    };
-  }
-
-  // Check if all parameters are numbers and positive
-  if (
-    typeof width !== "number" ||
-    typeof length !== "number" ||
-    typeof height !== "number" ||
-    typeof weight !== "number"
-  ) {
-    return {
-      isValid: false,
-      message: "ขนาดและน้ำหนักต้องเป็นตัวเลขเท่านั้น",
-    };
-  }
-
-  if (width <= 0 || length <= 0 || height <= 0 || weight <= 0) {
-    return {
-      isValid: false,
-      message: "ขนาดและน้ำหนักต้องเป็นค่าที่มากกว่า 0",
-    };
-  }
-
-  // Add maximum size constraints if needed
-  const MAX_DIMENSION = 1000; // 10 meters in cm
-  const MAX_WEIGHT = 10000; // 10 tons in kg
-
-  if (
-    width > MAX_DIMENSION ||
-    length > MAX_DIMENSION ||
-    height > MAX_DIMENSION
-  ) {
-    return {
-      isValid: false,
-      message: "ขนาดต้องไม่เกิน 1000 ซม. (10 เมตร)",
-    };
-  }
-
-  if (weight > MAX_WEIGHT) {
-    return {
-      isValid: false,
-      message: "น้ำหนักต้องไม่เกิน 10,000 กก. (10 ตัน)",
-    };
-  }
-
-  return { isValid: true };
-}
-
-/**
- * บันทึกข้อมูลการคำนวณลงฐานข้อมูล
- * @param {Object} data - ข้อมูลที่จะบันทึก
- * @param {FirebaseDatabase} db - Firebase database instance
- * @param {string} userId - ID ของผู้ใช้
- * @returns {Promise<void>}
- */
-async function saveCalculationData(data, db, userId) {
-  if (!db || !userId) {
-    console.warn("Missing database instance or user ID");
-    return;
-  }
-
-  try {
-    const calculationRef = db.ref(`shipping_calculations/${userId}`);
-    await calculationRef.push({
-      ...data,
-      timestamp: getThaiTime().toISOString(),
-      created_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Database error:", error);
-    // ไม่ throw error เพื่อให้การคำนวณดำเนินต่อได้
-  }
-}
-
-/**
- * สร้างข้อความตอบกลับ
- * @param {Object} data - ข้อมูลสำหรับสร้างข้อความ
- * @returns {string} ข้อความตอบกลับ
- */
-function createResponse(data) {
-  const {
-    width,
-    length,
-    height,
-    weight,
-    cbm,
-    rank,
-    productType,
-    shippingMethod,
-    fee,
-    method,
-  } = data;
-
-  const productTypeMapping = {
-    general: "สินค้าทั่วไป",
-    "type1-2": "สินค้าประเภท 1,2",
-    special: "สินค้าพิเศษ",
-  };
-
-  return (
-    `🚚 ผลการคำนวณค่าขนส่ง:\n\n` +
-    `📦 ขนาด: ${width}x${length}x${height} ซม.\n` +
-    `⚖️ น้ำหนัก: ${weight} กก.\n` +
-    `📊 ปริมาตร: ${cbm.toFixed(3)} CBM\n` +
-    `🏆 Rank: ${rank} Rabbit\n` +
-    `🏷️ ประเภทสินค้า: ${productTypeMapping[productType] || productType}\n` +
-    `🚛 วิธีขนส่ง: ${shippingMethod === "land" ? "ทางรถ" : "ทางเรือ"}\n` +
-    `💰 ค่าขนส่ง: ${fee.toFixed(2)} บาท\n` +
-    `ℹ️ คิดตาม: ${method === "CBM" ? "ปริมาตร" : "น้ำหนัก"}`
-  );
+  // เลือกค่าที่มากกว่า
+  return Math.max(byWeight, byCBM);
 }
 
 /**
@@ -248,71 +122,64 @@ function createResponse(data) {
  */
 async function handleShippingCalculation(agent, db) {
   try {
-    // รับพารามิเตอร์จาก Dialogflow พร้อมค่าเริ่มต้น
-    const parameters = agent.parameters || {};
-    const {
-      width = 0,
-      length = 0,
-      height = 0,
-      weight = 0,
-      productType = "general",
-      shippingMethod = "land",
-      accumulatedAmount = 0,
-    } = parameters;
+    const input = agent.query;
+    const params = parseInput(input);
 
-    // ตรวจสอบความถูกต้องของพารามิเตอร์
-    const validation = validateParameters({ width, length, height, weight });
-    if (!validation.isValid) {
-      agent.add(validation.message);
+    // ตรวจสอบข้อมูลที่จำเป็น
+    if (
+      !params.rank ||
+      !params.type ||
+      !params.weight ||
+      !params.dimensions ||
+      !params.transport
+    ) {
+      agent.add(
+        "กรุณาระบุข้อมูลให้ครบถ้วนในรูปแบบ:\nRank: [ระดับ]\nประเภท: [ประเภทสินค้า]\nน้ำหนัก: [น้ำหนัก]kg\nขนาด: [กว้าง]x[ยาว]x[สูง] ซม.\nขนส่ง: [รถ/เรือ]"
+      );
       return;
     }
 
-    // คำนวณค่าต่างๆ
-    const cbm = calculateCBM(width, length, height);
-    const rank = determineRank(accumulatedAmount);
+    // แปลงน้ำหนักเป็นตัวเลข
+    const weight = parseFloat(params.weight.replace("kg", ""));
+    const cbm = calculateCBM(params.dimensions);
 
-    try {
-      const rate = getShippingRate(rank, productType, shippingMethod);
-      const { fee, method } = calculateShippingFee(weight, cbm, rate);
+    // คำนวณค่าขนส่ง
+    const shippingFee = calculateShippingFee(
+      params.rank,
+      params.type,
+      weight,
+      cbm,
+      params.transport
+    );
+    const isCalculatedByCBM = cbm > weight;
 
-      // เตรียมข้อมูลสำหรับบันทึกและสร้างการตอบกลับ
-      const calculationData = {
-        dimensions: { width, length, height },
-        weight,
-        cbm,
-        productType,
-        shippingMethod,
-        rank,
-        fee,
-        calculationMethod: method,
-      };
+    // บันทึกข้อมูลการคำนวณลง Firebase
+    const userId =
+      agent.originalRequest?.payload?.data?.source?.userId || "unknown";
+    const calculationRef = db.ref(`shipping_calculations/${userId}`);
+    await calculationRef.push({
+      timestamp: getThaiTime().toISOString(),
+      params,
+      weight,
+      cbm,
+      shippingFee,
+      calculatedBy: isCalculatedByCBM ? "CBM" : "KG",
+    });
 
-      // บันทึกข้อมูล
-      const userId =
-        agent.originalRequest?.payload?.data?.source?.userId || "unknown";
-      await saveCalculationData(calculationData, db, userId);
+    // สร้างข้อความตอบกลับ
+    const response =
+      `🚚 ค่าขนส่งคำนวณได้ดังนี้:\n\n` +
+      `📌 Rank: ${params.rank}\n` +
+      `📦 ประเภทสินค้า: ${params.type}\n` +
+      `⚖️ น้ำหนัก: ${weight}kg\n` +
+      `📐 ขนาด: ${params.dimensions}\n` +
+      `🛣 วิธีขนส่ง: ${params.transport}\n\n` +
+      `✅ สินค้าถูกคำนวณเป็น ${isCalculatedByCBM ? "CBM" : "KG"}\n` +
+      `💰 ค่าขนส่งจากจีนมาไทย: ${shippingFee.toFixed(2)} บาท\n` +
+      `🚛 ค่าขนส่งในไทย: รับที่บริษัท (ฟรี)\n` +
+      `📌 ยอดรวมค่าขนส่ง: ${shippingFee.toFixed(2)} บาท`;
 
-      // สร้างและส่งการตอบกลับ
-      const response = createResponse({
-        width,
-        length,
-        height,
-        weight,
-        cbm,
-        rank,
-        productType,
-        shippingMethod,
-        fee,
-        method,
-      });
-
-      agent.add(response);
-    } catch (error) {
-      console.error("Rate calculation error:", error);
-      agent.add(
-        "ขออภัย พบข้อผิดพลาดในการคำนวณอัตราค่าขนส่ง กรุณาตรวจสอบข้อมูลที่ระบุ"
-      );
-    }
+    agent.add(response);
   } catch (error) {
     console.error("❌ Error in handleShippingCalculation:", error);
     agent.add("ขออภัย เกิดข้อผิดพลาดในการคำนวณ กรุณาลองใหม่อีกครั้ง");
@@ -321,11 +188,6 @@ async function handleShippingCalculation(agent, db) {
 
 module.exports = {
   calculateCBM,
-  determineRank,
-  getShippingRate,
   calculateShippingFee,
   handleShippingCalculation,
-  validateParameters,
-  saveCalculationData,
-  createResponse,
 };
