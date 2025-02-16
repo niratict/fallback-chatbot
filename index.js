@@ -7,11 +7,10 @@ const { getThaiTime } = require("./src/services/timeService");
 // ตรวจสอบความถูกต้องของตัวแปรสภาพแวดล้อม
 validateEnvironment();
 
-// เริ่มต้นการเชื่อมต่อ Firebase
+// เริ่มต้นการเชื่อมต่อ Firebase และส่งต่อ db ไปยัง app
 const db = initializeFirebase();
+const app = createApp(db); // ส่ง db เข้าไปใน createApp
 
-// สร้างและเริ่มต้น Express application
-const app = createApp();
 const port = process.env.PORT || 3000;
 
 // เริ่มต้นเซิร์ฟเวอร์
@@ -28,13 +27,32 @@ app.listen(port, () => {
   `);
 });
 
-// ตัวจัดการข้อผิดพลาด
-process.on("uncaughtException", (error) => {
-  console.error("💥 เกิดข้อผิดพลาดที่ไม่ได้จัดการ:", error);
-  process.exit(1);
-});
+// ส่วนของ error handling คงเดิม...
 
-process.on("unhandledRejection", (error) => {
-  console.error("💥 เกิด Promise rejection ที่ไม่ได้จัดการ:", error);
-  process.exit(1);
-});
+// app.js
+const express = require("express");
+const { getThaiTime } = require("./services/timeService");
+
+const createApp = (db) => {
+  const app = express();
+
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
+  // ส่ง db ไปยัง webhook routes
+  const webhookRoutes = require("./routes/webhook")(db);
+
+  app.get("/", (req, res) => {
+    const thaiTime = getThaiTime();
+    res.send({
+      status: "online",
+      timestamp: thaiTime.toISOString(),
+      thai_time: thaiTime.toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }),
+      service: "Dialogflow Webhook",
+    });
+  });
+
+  app.use("/webhook", webhookRoutes);
+
+  return app;
+};
