@@ -1,6 +1,8 @@
-const { getThaiTime } = require("./timeService");
 
 // ฟังก์ชันคำนวณค่าบริการ
+
+const { getThaiTime } = require("./timeService");
+
 function calculateServiceFee(serviceType, hours = 0) {
   const baseFees = {
     basic: 100, // ค่าบริการพื้นฐาน
@@ -44,7 +46,7 @@ function calculateShippingFee(distance, shippingType, needPackaging = false) {
 }
 
 // ฟังก์ชันจัดการ Intent สำหรับคำนวณค่าบริการและค่าขนส่ง
-async function handleFeeCalculation(agent, db, getThaiTime) {
+async function handleFeeCalculation(agent, db) {
   try {
     // รับพารามิเตอร์จาก Dialogflow
     const parameters = agent.parameters;
