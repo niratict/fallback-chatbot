@@ -3,6 +3,7 @@ const { WebhookClient } = require("dialogflow-fulfillment");
 const { handleCalculator } = require("../handlers/intentHandlers");
 const { handleFallback } = require("../handlers/fallbackHandler");
 const { handleFeeCalculation } = require("../services/feeCalculator");
+const { handleWoodenCrateCalculation } = require("../services/woodenCrateCalculator");
 
 module.exports = (db) => {
   const router = express.Router();
@@ -16,6 +17,9 @@ module.exports = (db) => {
     );
     intentMap.set("Calculator", (agent) => handleCalculator(agent, db));
     intentMap.set("FeeCalculation", (agent) => handleFeeCalculation(agent, db));
+    intentMap.set("WoodenCrateCalculation", (agent) => 
+      handleWoodenCrateCalculation(agent, db)
+    );
 
     try {
       await agent.handleRequest(intentMap);
