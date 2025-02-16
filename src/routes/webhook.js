@@ -3,8 +3,12 @@ const { WebhookClient } = require("dialogflow-fulfillment");
 const { handleCalculator } = require("../handlers/intentHandlers");
 const { handleFallback } = require("../handlers/fallbackHandler");
 const { handleFeeCalculation } = require("../services/feeCalculator");
+const { initializeFirebase } = require("../firebase"); // เพิ่ม import firebase
 
 const router = express.Router();
+
+// เริ่มต้นการเชื่อมต่อ Firebase
+const db = initializeFirebase();
 
 // เส้นทางสำหรับรับคำขอจาก Dialogflow
 router.post("/", async (req, res) => {
