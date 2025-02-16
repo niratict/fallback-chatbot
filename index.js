@@ -2,6 +2,7 @@
 const express = require("express");
 const { WebhookClient } = require("dialogflow-fulfillment");
 const admin = require("firebase-admin");
+const feeCalculator = require('./feeCalculator');
 
 // ===================== ส่วนตั้งค่าการทำงานพื้นฐาน (Basic Configuration) =====================
 
@@ -266,6 +267,7 @@ app.post("/webhook", async (req, res) => {
   // เพิ่ม intent handlers
   intentMap.set("Default Fallback Intent", handleFallback);
   intentMap.set("Calculator", handleCalculator); // เพิ่ม Calculator Intent
+  intentMap.set('FeeCalculation', (agent) => feeCalculator.handleFeeCalculation(agent, db, getThaiTime));
 
   try {
     await agent.handleRequest(intentMap);
