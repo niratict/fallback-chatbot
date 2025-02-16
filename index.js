@@ -1,307 +1,40 @@
-// นำเข้า packages ที่จำเป็น
-const express = require("express");
-const { WebhookClient } = require("dialogflow-fulfillment");
-const admin = require("firebase-admin");
-const feeCalculator = require('./feeCalculator');
+// index.js
+const { validateEnvironment } = require("./src/config/environment");
+const { initializeFirebase } = require("./src/config/firebase");
+const { createApp } = require("./src/app");
+const { getThaiTime } = require("./src/services/timeService");
 
-// ===================== ส่วนตั้งค่าการทำงานพื้นฐาน (Basic Configuration) =====================
+// ตรวจสอบความถูกต้องของตัวแปรสภาพแวดล้อม
+validateEnvironment();
 
-// ฟังก์ชันสำหรับแปลงเวลาเป็นเวลาประเทศไทย
-function getThaiTime() {
-  const now = new Date();
-  return new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
-}
+// เริ่มต้นการเชื่อมต่อ Firebase
+const db = initializeFirebase();
 
-// ฟังก์ชันตรวจสอบเวลาทำการ (9:00-18:00 น.)
-function isWithinBusinessHours() {
-  const thaiTime = getThaiTime();
-  const day = thaiTime.getDay(); // 0 = อาทิตย์, 1-6 = จันทร์-เสาร์
-  const hour = thaiTime.getHours();
-  const minutes = thaiTime.getMinutes();
-  const currentTime = hour + minutes / 60;
-
-  console.log(
-    `🕒 Current Thai time: ${thaiTime.toLocaleString("th-TH", {
-      timeZone: "Asia/Bangkok",
-    })}`
-  );
-  console.log(`📅 Day: ${day}, Hour: ${hour}, Minutes: ${minutes}`);
-
-  // วันอาทิตย์ (9:00-18:00)
-  if (day === 0) {
-    return currentTime >= 9 && currentTime < 18;
-  }
-  // วันจันทร์-เสาร์ (9:00-24:00)
-  else if (day >= 1 && day <= 6) {
-    return currentTime >= 9 && currentTime < 24;
-  }
-  return false;
-}
-
-// ===================== ส่วนคำนวณเลข (Calculator Functions) =====================
-
-// ฟังก์ชันสำหรับคำนวณผลลัพธ์
-function calculateResult(num1, operator, num2) {
-  switch (operator) {
-    case "+":
-      return num1 + num2;
-    case "-":
-      return num1 - num2;
-    case "*":
-      return num1 * num2;
-    case "/":
-      return num2 !== 0 ? num1 / num2 : null;
-    default:
-      return null;
-  }
-}
-
-// ฟังก์ชันจัดการ Calculator Intent
-async function handleCalculator(agent) {
-  try {
-    // รับข้อความจากผู้ใช้
-    const message = agent.query;
-    console.log(`📝 Received calculation request: ${message}`);
-
-    // แยกส่วนประกอบของสมการด้วย Regular Expression
-    const calculationRegex =
-      /^\s*(-?\d+\.?\d*)\s*([\+\-\*\/])\s*(-?\d+\.?\d*)\s*$/;
-    const match = message.match(calculationRegex);
-
-    if (!match) {
-      agent.add('กรุณาป้อนสมการในรูปแบบที่ถูกต้อง เช่น "10 + 5" หรือ "20 * 3"');
-      return;
-    }
-
-    // แปลงข้อมูลเป็นตัวเลขและเครื่องหมาย
-    const num1 = parseFloat(match[1]);
-    const operator = match[2];
-    const num2 = parseFloat(match[3]);
-
-    // คำนวณผลลัพธ์
-    const result = calculateResult(num1, operator, num2);
-
-    // ตรวจสอบความถูกต้องของผลลัพธ์
-    if (result === null) {
-      agent.add("ไม่สามารถคำนวณได้ กรุณาตรวจสอบตัวเลขและเครื่องหมายที่ใช้");
-      return;
-    }
-
-    // บันทึกประวัติการคำนวณลง Firebase
-    const userId =
-      agent.originalRequest?.payload?.data?.source?.userId || "unknown";
-    const calculationRef = db.ref(`calculations/${userId}`);
-    await calculationRef.push({
-      expression: message,
-      result: result,
-      timestamp: getThaiTime().toISOString(),
-    });
-
-    // ส่งผลลัพธ์กลับไปยังผู้ใช้
-    agent.add(`ผลลัพธ์ของ ${num1} ${operator} ${num2} คือ ${result}`);
-  } catch (error) {
-    console.error("❌ Error in handleCalculator:", error);
-    agent.add("ขออภัย เกิดข้อผิดพลาดในการคำนวณ กรุณาลองใหม่อีกครั้ง");
-  }
-}
-
-// ===================== ส่วนตรวจสอบและตั้งค่า Environment Variables =====================
-
-// ตรวจสอบ environment variables ที่จำเป็นต้องมี
-const requiredEnvVars = [
-  "FIREBASE_TYPE",
-  "FIREBASE_PROJECT_ID",
-  "FIREBASE_PRIVATE_KEY",
-  "FIREBASE_CLIENT_EMAIL",
-  "FIREBASE_DATABASE_URL",
-];
-
-requiredEnvVars.forEach((varName) => {
-  if (!process.env[varName]) {
-    console.error(`❌ Missing required environment variable: ${varName}`);
-    process.exit(1);
-  }
-});
-
-// ===================== ส่วนตั้งค่าและเชื่อมต่อ Firebase =====================
-
-// กำหนดค่า Firebase Service Account
-const serviceAccount = {
-  type: process.env.FIREBASE_TYPE,
-  project_id: process.env.FIREBASE_PROJECT_ID,
-  private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-  private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-  client_email: process.env.FIREBASE_CLIENT_EMAIL,
-  client_id: process.env.FIREBASE_CLIENT_ID,
-  auth_uri: process.env.FIREBASE_AUTH_URI,
-  token_uri: process.env.FIREBASE_TOKEN_URI,
-  auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
-  client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
-};
-
-// เริ่มการเชื่อมต่อและทดสอบ Firebase
-console.log("🔄 Attempting to connect to Firebase...");
-console.log("📝 Firebase config:", {
-  projectId: serviceAccount.project_id,
-  clientEmail: serviceAccount.client_email,
-  databaseURL: process.env.FIREBASE_DATABASE_URL,
-});
-
-let db;
-try {
-  // เริ่มต้นการเชื่อมต่อ Firebase
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: process.env.FIREBASE_DATABASE_URL,
-  });
-
-  db = admin.database();
-
-  // ทดสอบการเชื่อมต่อและการเขียนข้อมูล
-  db.ref(".info/connected").on("value", async (snapshot) => {
-    if (snapshot.val() === true) {
-      console.log("✅ Connected to Firebase Realtime Database");
-      try {
-        await db.ref("system_status").set({
-          last_connection: new Date().toISOString(),
-          status: "online",
-        });
-        console.log("✅ Firebase write test successful");
-      } catch (writeError) {
-        console.error("❌ Firebase write test failed:", writeError);
-      }
-    } else {
-      console.log("❌ Disconnected from Firebase Realtime Database");
-    }
-  });
-
-  // ทดสอบการอ่านข้อมูล
-  db.ref("system_status")
-    .once("value")
-    .then(() => console.log("✅ Firebase read test successful"))
-    .catch((error) => console.error("❌ Firebase read test failed:", error));
-} catch (initError) {
-  console.error("❌ Firebase initialization error:", initError);
-  process.exit(1);
-}
-
-// ===================== ส่วนตั้งค่า Express Server =====================
-
-// ตั้งค่า Express และ Middleware
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// ===================== ส่วน Route Handlers =====================
-
-// Route สำหรับตรวจสอบสถานะเซิร์ฟเวอร์
-app.get("/", (req, res) => {
-  const thaiTime = getThaiTime();
-  res.send({
-    status: "online",
-    timestamp: thaiTime.toISOString(),
-    thai_time: thaiTime.toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }),
-    service: "Dialogflow Webhook",
-    firebase_status: db ? "initialized" : "not_initialized",
-  });
-});
-
-// ===================== ส่วนจัดการ Dialogflow Webhook =====================
-
-// ฟังก์ชันจัดการ Fallback Intent
-async function handleFallback(agent) {
-  try {
-    // ดึง userId จาก LINE
-    const userId =
-      agent.originalRequest?.payload?.data?.source?.userId || "unknown";
-    console.log(`👤 Processing fallback for user: ${userId}`);
-
-    // ตรวจสอบและอัพเดทข้อมูลผู้ใช้ใน Firebase
-    const userRef = db.ref(`users/${userId}`);
-    const snapshot = await userRef.once("value");
-    const userData = snapshot.val() || {};
-    const lastFallbackTime = userData.lastFallbackTime || 0;
-    const currentTime = Date.now();
-    const COOLDOWN_PERIOD = 1800000; // 30 นาที
-
-    // ตรวจสอบช่วงเวลา cooldown
-    if (currentTime - lastFallbackTime >= COOLDOWN_PERIOD) {
-      // อัพเดทเวลาล่าสุดที่ผู้ใช้ได้รับข้อความ fallback
-      await userRef.update({
-        lastFallbackTime: currentTime,
-        lastUpdated: getThaiTime().toISOString(),
-        userId: userId,
-      });
-
-      // ส่งข้อความตามเวลาทำการ
-      if (isWithinBusinessHours()) {
-        agent.add("รบกวนคุณลูกค้ารอเจ้าหน้าที่ฝ่ายบริการตอบกลับอีกครั้งนะคะ");
-      } else {
-        agent.add(
-          "รบกวนคุณลูกค้ารอเจ้าหน้าที่ฝ่ายบริการตอบกลับอีกครั้งนะคะ ทั้งนี้เจ้าหน้าที่ฝ่ายบริการทำการจันทร์-เสาร์ เวลา 09.00-00.00 น. และวันอาทิตย์ทำการเวลา 09.00-18.00 น. ค่ะ"
-        );
-      }
-      console.log(`✅ Updated fallback time for user: ${userId}`);
-    } else {
-      agent.add(""); // ไม่ส่งข้อความถ้าอยู่ในช่วง cooldown
-      console.log(`ℹ️ User ${userId} is in cooldown period`);
-    }
-  } catch (error) {
-    console.error("❌ Error in handleFallback:", error);
-    agent.add("ขออภัย เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
-  }
-}
-
-// Webhook endpoint สำหรับ Dialogflow
-app.post("/webhook", async (req, res) => {
-  const thaiTime = getThaiTime();
-  console.log("🔗 Received webhook request:", {
-    timestamp: thaiTime.toISOString(),
-    thai_time: thaiTime.toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }),
-    body: JSON.stringify(req.body, null, 2),
-  });
-
-  const agent = new WebhookClient({ request: req, response: res });
-  const intentMap = new Map();
-
-  // เพิ่ม intent handlers
-  intentMap.set("Default Fallback Intent", handleFallback);
-  intentMap.set("Calculator", handleCalculator); // เพิ่ม Calculator Intent
-  intentMap.set('FeeCalculation', (agent) => feeCalculator.handleFeeCalculation(agent, db, getThaiTime));
-
-  try {
-    await agent.handleRequest(intentMap);
-  } catch (error) {
-    console.error("❌ Error handling webhook request:", error);
-    res.status(500).send({ error: "Internal server error" });
-  }
-});
-
-// ===================== ส่วนเริ่มต้น Server และจัดการข้อผิดพลาด =====================
-
-// เริ่มต้น server
+// สร้างและเริ่มต้น Express application
+const app = createApp();
 const port = process.env.PORT || 3000;
+
+// เริ่มต้นเซิร์ฟเวอร์
 app.listen(port, () => {
   const thaiTime = getThaiTime();
   console.log(`
-🚀 Server is running
-📋 Details:
-- Port: ${port}
-- Environment: ${process.env.NODE_ENV || "development"}
-- Firebase Project: ${process.env.FIREBASE_PROJECT_ID}
-- Database URL: ${process.env.FIREBASE_DATABASE_URL}
-- Server Time: ${new Date().toISOString()}
-- Thai Time: ${thaiTime.toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}
+🚀 เริ่มต้นเซิร์ฟเวอร์สำเร็จ
+📋 รายละเอียด:
+- พอร์ต: ${port}
+- สภาพแวดล้อม: ${process.env.NODE_ENV || "development"}
+- โปรเจค Firebase: ${process.env.FIREBASE_PROJECT_ID}
+- เวลาเซิร์ฟเวอร์: ${new Date().toISOString()}
+- เวลาไทย: ${thaiTime.toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}
   `);
 });
 
-// จัดการ uncaught exceptions และ unhandled rejections
+// ตัวจัดการข้อผิดพลาด
 process.on("uncaughtException", (error) => {
-  console.error("💥 Uncaught Exception:", error);
+  console.error("💥 เกิดข้อผิดพลาดที่ไม่ได้จัดการ:", error);
   process.exit(1);
 });
 
 process.on("unhandledRejection", (error) => {
-  console.error("💥 Unhandled Rejection:", error);
+  console.error("💥 เกิด Promise rejection ที่ไม่ได้จัดการ:", error);
   process.exit(1);
 });
