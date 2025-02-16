@@ -3,7 +3,7 @@ const { WebhookClient } = require("dialogflow-fulfillment");
 const { handleCalculator } = require("../handlers/intentHandlers");
 const { handleFallback } = require("../handlers/fallbackHandler");
 const { handleFeeCalculation } = require("../services/feeCalculator");
-const { initializeFirebase } = require("../firebase"); // เพิ่ม import firebase
+const { initializeFirebase } = require("../config/firebase"); // เพิ่ม import firebase
 
 const router = express.Router();
 
