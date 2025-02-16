@@ -1,3 +1,5 @@
+const { getThaiTime } = require("./timeService");
+
 // ฟังก์ชันคำนวณค่าบริการ
 function calculateServiceFee(serviceType, hours = 0) {
   const baseFees = {
