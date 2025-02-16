@@ -7,6 +7,7 @@ const {
   handleWoodenCrateCalculation,
 } = require("../services/woodenCrateCalculator");
 const { handleShippingCalculation } = require("../services/shippingCalculator");
+const { handleRankShippingInquiry } = require("../services/rankShippingHandler");
 
 module.exports = (db) => {
   const router = express.Router();
@@ -31,6 +32,9 @@ module.exports = (db) => {
     intentMap.set("ShippingCalculation", (agent) =>
       handleShippingCalculation(agent, db)
     );
+    intentMap.set("RankInquiry", (agent) => handleRankShippingInquiry(agent, db));
+    intentMap.set("CarShippingRates", (agent) => handleRankShippingInquiry(agent, db));
+    intentMap.set("ShipShippingRates", (agent) => handleRankShippingInquiry(agent, db));
 
     // Add default handler for unhandled intents
     intentMap.set(null, (agent) => {
