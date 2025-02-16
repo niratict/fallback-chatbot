@@ -37,6 +37,73 @@ function isWithinBusinessHours() {
   return false;
 }
 
+// ===================== ส่วนคำนวณเลข (Calculator Functions) =====================
+
+// ฟังก์ชันสำหรับคำนวณผลลัพธ์
+function calculateResult(num1, operator, num2) {
+  switch (operator) {
+    case "+":
+      return num1 + num2;
+    case "-":
+      return num1 - num2;
+    case "*":
+      return num1 * num2;
+    case "/":
+      return num2 !== 0 ? num1 / num2 : null;
+    default:
+      return null;
+  }
+}
+
+// ฟังก์ชันจัดการ Calculator Intent
+async function handleCalculator(agent) {
+  try {
+    // รับข้อความจากผู้ใช้
+    const message = agent.query;
+    console.log(`📝 Received calculation request: ${message}`);
+
+    // แยกส่วนประกอบของสมการด้วย Regular Expression
+    const calculationRegex =
+      /^\s*(-?\d+\.?\d*)\s*([\+\-\*\/])\s*(-?\d+\.?\d*)\s*$/;
+    const match = message.match(calculationRegex);
+
+    if (!match) {
+      agent.add('กรุณาป้อนสมการในรูปแบบที่ถูกต้อง เช่น "10 + 5" หรือ "20 * 3"');
+      return;
+    }
+
+    // แปลงข้อมูลเป็นตัวเลขและเครื่องหมาย
+    const num1 = parseFloat(match[1]);
+    const operator = match[2];
+    const num2 = parseFloat(match[3]);
+
+    // คำนวณผลลัพธ์
+    const result = calculateResult(num1, operator, num2);
+
+    // ตรวจสอบความถูกต้องของผลลัพธ์
+    if (result === null) {
+      agent.add("ไม่สามารถคำนวณได้ กรุณาตรวจสอบตัวเลขและเครื่องหมายที่ใช้");
+      return;
+    }
+
+    // บันทึกประวัติการคำนวณลง Firebase
+    const userId =
+      agent.originalRequest?.payload?.data?.source?.userId || "unknown";
+    const calculationRef = db.ref(`calculations/${userId}`);
+    await calculationRef.push({
+      expression: message,
+      result: result,
+      timestamp: getThaiTime().toISOString(),
+    });
+
+    // ส่งผลลัพธ์กลับไปยังผู้ใช้
+    agent.add(`ผลลัพธ์ของ ${num1} ${operator} ${num2} คือ ${result}`);
+  } catch (error) {
+    console.error("❌ Error in handleCalculator:", error);
+    agent.add("ขออภัย เกิดข้อผิดพลาดในการคำนวณ กรุณาลองใหม่อีกครั้ง");
+  }
+}
+
 // ===================== ส่วนตรวจสอบและตั้งค่า Environment Variables =====================
 
 // ตรวจสอบ environment variables ที่จำเป็นต้องมี
@@ -195,7 +262,10 @@ app.post("/webhook", async (req, res) => {
 
   const agent = new WebhookClient({ request: req, response: res });
   const intentMap = new Map();
+
+  // เพิ่ม intent handlers
   intentMap.set("Default Fallback Intent", handleFallback);
+  intentMap.set("Calculator", handleCalculator); // เพิ่ม Calculator Intent
 
   try {
     await agent.handleRequest(intentMap);
