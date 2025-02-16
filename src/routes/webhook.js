@@ -4,7 +4,6 @@ const { handleCalculator } = require("../handlers/intentHandlers");
 const { handleFallback } = require("../handlers/fallbackHandler");
 const { handleFeeCalculation } = require("../services/feeCalculator");
 
-// รับ db จาก parameter แทนการ initialize ใหม่
 module.exports = (db) => {
   const router = express.Router();
 

@@ -1,17 +1,14 @@
-// src/app.js
 const express = require("express");
-const webhookRoutes = require("./routes/webhook");
 const { getThaiTime } = require("./services/timeService");
 
-// ฟังก์ชันสร้าง Express application
-const createApp = () => {
+const createApp = (db) => {
   const app = express();
 
-  // ตั้งค่า Middleware
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // เส้นทางหลักสำหรับตรวจสอบสถานะเซิร์ฟเวอร์
+  const webhookRoutes = require("./routes/webhook")(db);
+
   app.get("/", (req, res) => {
     const thaiTime = getThaiTime();
     res.send({
@@ -22,7 +19,6 @@ const createApp = () => {
     });
   });
 
-  // เพิ่มเส้นทาง webhook
   app.use("/webhook", webhookRoutes);
 
   return app;
