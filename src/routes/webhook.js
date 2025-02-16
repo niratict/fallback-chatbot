@@ -13,8 +13,13 @@ module.exports = (db) => {
 
   router.post("/", async (req, res) => {
     const agent = new WebhookClient({ request: req, response: res });
+
+    // Log intent name for debugging
+    console.log("📨 Received intent:", agent.intent);
+
     const intentMap = new Map();
 
+    // Set handlers for each intent
     intentMap.set("Default Fallback Intent", (agent) =>
       handleFallback(agent, db)
     );
@@ -27,10 +32,18 @@ module.exports = (db) => {
       handleShippingCalculation(agent, db)
     );
 
+    // Add default handler for unhandled intents
+    intentMap.set(null, (agent) => {
+      console.log("⚠️ No specific handler for intent:", agent.intent);
+      agent.add("ขออภัย ระบบไม่สามารถประมวลผลคำขอนี้ได้ กรุณาลองใหม่อีกครั้ง");
+    });
+
     try {
       await agent.handleRequest(intentMap);
     } catch (error) {
       console.error("❌ เกิดข้อผิดพลาดในการจัดการคำขอ webhook:", error);
+      console.error("Intent:", agent.intent);
+      console.error("Query:", agent.query);
       res.status(500).send({ error: "เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์" });
     }
   });
